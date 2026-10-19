@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {academicHours,ranges,intervalMinutes,inferOccurrence,groupEvents,isReady,googleExportUrl,cleanTitle,splitEvents} from '../src/core.js';
+test('40-minute academic hours round each occurrence up',()=>{assert.equal(academicHours(40),1);assert.equal(academicHours(60),2);assert.equal(academicHours(80),2);assert.equal(academicHours(0),null);assert.equal(academicHours(NaN),null);});
+test('merged cells exclude breaks and overlapping slots do not double count',()=>{assert.equal(intervalMinutes(ranges('19:30-20:10, 20:15-20:55')),80);assert.equal(intervalMinutes(ranges('14:35-16:00, 14:35-15:15, 15:20-16:00')),85);});
+test('all groups contribute, rounding before aggregation',()=>{const records=[{title:'Курс',category:'2',minutes:60,count:3,confirmed:true},{title:'Курс',category:'2',minutes:40,count:1,confirmed:true}];assert.equal(groupEvents(records)[0].hours,7);});
+test('unknown timing cannot silently contribute zero or export',()=>{const e={title:'Курс',category:'2',minutes:null,count:1,confirmed:false};assert.equal(groupEvents([e])[0].incomplete,true);assert.equal(isReady(e),false);assert.equal(isReady({...e,excluded:true}),true);});
+test('ambiguous multi-event cells require review',()=>{const slots=ranges('09:45-10:25, 10:30-11:10');assert.equal(inferOccurrence('Курс',slots,false).minutes,80);assert.equal(inferOccurrence('Курс',slots,true).confirmed,false);assert.equal(inferOccurrence('11:00-11:20 Презентация',slots,true).minutes,20);});
+test('multiple explicit group sessions require review',()=>assert.equal(inferOccurrence('один отряд 09:45-10:20, второй отряд 10:30-11:10',[],true).confirmed,false));
+test('clean names aggregate groups without erasing meaningful qualifiers',()=>{assert.equal(cleanTitle('Практика «Новички в деле» (1 отр.)'),'Практика «Новички в деле»');assert.equal(cleanTitle('Спектакль (зрители)'),'Спектакль (зрители)');});
+test('Google import only allows expected host and extracts ID',()=>{assert.equal(googleExportUrl('https://docs.google.com/spreadsheets/d/abc-123/edit?gid=1'),'https://docs.google.com/spreadsheets/d/abc-123/export?format=xlsx');assert.throws(()=>googleExportUrl('https://example.com/spreadsheets/d/abc'));});
+test('slash-delimited source events split without damaging abbreviations',()=>assert.deepEqual(splitEvents('Практика (1 отр.) / О/д «Родина»'),['Практика (1 отр.)','О/д «Родина»']));
+test('group IDs are not group counts',()=>{assert.equal(inferOccurrence('Курс (3 отр.)',ranges('10:00-10:40'),false).count,1);assert.equal(inferOccurrence('Курс (1, 2 отр.)',ranges('10:00-10:40'),false).count,2);});
