@@ -1,4 +1,4 @@
-import { normalize, ranges, splitEvents, cleanTitle, inferOccurrence,groupIds } from './core.js';
+import { normalize, ranges, splitEvents, cleanTitle, inferOccurrence,parallelAudiences } from './core.js';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 export const nodes = (node, name) => [...node.getElementsByTagNameNS('*', name)];
 export const children = (node, name) => [...node.children].filter(n=>n.localName===name);
@@ -59,8 +59,7 @@ export function extractEvents(sheet, col, dictionary, categories) {
     const slots=[];
     for (let r=row;r<=end;r++) slots.push(...ranges(sheet.cells.get(sheet.timeCol+r)||''));
     const lines=splitEvents(raw);
-    const allGroups=lines.flatMap(groupIds);
-    const parallel=lines.length>1 && lines.every(l=>groupIds(l).length) && new Set(allGroups).size===allGroups.length;
+    const parallel=parallelAudiences(lines);
     for (const line of lines) {
       const title=cleanTitle(line); if (!title) continue;
       const found=matchCategory(title,dictionary,categories);
@@ -139,7 +138,16 @@ export function calendarDictionary(xml,categories) {
 }
 function setText(cell,text){
   const doc=cell.ownerDocument; const oldP=children(cell,'p')[0]; const p=doc.createElementNS(W,'w:p');
-  const pPr=oldP && children(oldP,'pPr')[0]; if(pPr)p.appendChild(pPr.cloneNode(true));
+  const pPr=oldP && children(oldP,'pPr')[0];
+  const pr=pPr?pPr.cloneNode(true):doc.createElementNS(W,'w:pPr');
+  // The blank template row is a Word list. Disable both direct and inherited
+  // numbering so it cannot add a second number or advance lists outside this table.
+  nodes(pr,'numPr').forEach(n=>n.remove());
+  const numPr=doc.createElementNS(W,'w:numPr'),numId=doc.createElementNS(W,'w:numId');
+  numId.setAttributeNS(W,'w:val','0');numPr.appendChild(numId);
+  const style=children(pr,'pStyle')[0];
+  if(style)style.after(numPr);else pr.prepend(numPr);
+  p.appendChild(pr);
   const r=doc.createElementNS(W,'w:r'),rp=doc.createElementNS(W,'w:rPr');
   const font=doc.createElementNS(W,'w:rFonts');font.setAttributeNS(W,'w:ascii','Times New Roman');font.setAttributeNS(W,'w:hAnsi','Times New Roman');rp.appendChild(font);
   const sz=doc.createElementNS(W,'w:sz');sz.setAttributeNS(W,'w:val','24');rp.appendChild(sz);r.appendChild(rp);
