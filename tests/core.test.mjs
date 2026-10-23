@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {academicHours,ranges,intervalMinutes,inferOccurrence,groupEvents,reviewGroups,audience,parallelAudiences,isReady,googleExportUrl,cleanTitle,splitEvents} from '../src/core.js';
+import {academicHours,ranges,intervalMinutes,inferOccurrence,groupEvents,reviewGroups,audience,parallelAudiences,isReady,googleExportUrl,cleanTitle,splitEvents,applyEventEdit} from '../src/core.js';
 test('40-minute academic hours round each occurrence up; explicit zero is valid',()=>{assert.equal(academicHours(40),1);assert.equal(academicHours(60),2);assert.equal(academicHours(80),2);assert.equal(academicHours(0),0);for(const v of [NaN,null,undefined,'',-1])assert.equal(academicHours(v),null);});
 test('merged cells exclude breaks and overlapping slots do not double count',()=>{assert.equal(intervalMinutes(ranges('19:30-20:10, 20:15-20:55')),80);assert.equal(intervalMinutes(ranges('14:35-16:00, 14:35-15:15, 15:20-16:00')),85);});
 test('repeated unlabelled sessions contribute, rounding before aggregation',()=>{const records=[{title:'Курс',category:'2',minutes:60,count:3,confirmed:true},{title:'Курс',category:'2',minutes:40,count:1,confirmed:true}];assert.equal(groupEvents(records)[0].hours,7);});
@@ -13,6 +13,43 @@ test('slash-delimited source events split without damaging abbreviations',()=>as
 test('group IDs never multiply hours per child',()=>{assert.equal(inferOccurrence('Курс (3 отр.)',ranges('10:00-10:40'),false).count,1);assert.equal(inferOccurrence('Курс (1, 2 отр.)',ranges('10:00-10:40'),false).count,1);});
 
 const event=(raw,extra={})=>({title:cleanTitle(raw),raw,category:'2',minutes:40,count:1,confirmed:true,...extra});
+const editValues={title:'Курс',category:'3.2',minutes:60,count:1,excluded:false,applyAll:true};
+test('bulk edit resolves all matching pending entries across sections and dates',()=>{
+  const events=[event('Курс',{id:1,date:'01.10'}),event('«КУРС»',{id:2,date:'02.10',category:'',minutes:null,confirmed:false,reason:'Не найдено время проведения',count:2}),event('Курс',{id:3,category:'3.1',confirmed:false,reason:'Проверьте время'}),event('Другой курс',{id:4,category:'',minutes:null,confirmed:false})];
+  const unrelated={...events[3]};
+  applyEventEdit(events,[events[0]],editValues);
+  assert(events.slice(0,3).every(e=>e.category==='3.2' && e.minutes===60 && e.reason==='' && isReady(e)));
+  assert.equal(events[1].count,2);
+  assert.deepEqual(events[3],unrelated);
+  assert.deepEqual(reviewGroups(events).filter(g=>g.occurrences.some(e=>!isReady(e))).map(g=>g.title),['Другой курс']);
+});
+test('unchecked bulk edit only changes selected entries',()=>{
+  const events=[event('Курс'),event('Курс',{category:'',minutes:null,confirmed:false})];
+  const untouched={...events[1]};
+  applyEventEdit(events,[events[0]],{...editValues,applyAll:false});
+  assert.equal(events[0].minutes,60);assert.deepEqual(events[1],untouched);
+});
+test('blank bulk duration preserves existing timing and unresolved status',()=>{
+  const events=[event('Курс'),event('Курс',{minutes:80}),event('Курс',{category:'',minutes:null,confirmed:false,reason:'Нет времени'})];
+  applyEventEdit(events,events.slice(0,2),{...editValues,minutes:null,count:99});
+  assert(events.every(e=>e.category==='3.2' && e.count===1));
+  assert.deepEqual(events.map(e=>e.minutes),[40,80,null]);
+  assert.equal(events[2].confirmed,false);assert.equal(events[2].reason,'Нет времени');assert.equal(isReady(events[2]),false);
+});
+test('bulk zero duration confirms timing without reinstating excluded duplicates',()=>{
+  const events=[event('Курс'),event('Курс',{minutes:null,confirmed:false}),event('Курс',{excluded:true,exclusion:'Повтор',count:2})];
+  applyEventEdit(events,[events[0]],{...editValues,minutes:0});
+  assert(events.every(e=>e.minutes===0 && isReady(e)));
+  assert.equal(events[2].excluded,true);assert.equal(events[2].exclusion,'Повтор');assert.equal(events[2].count,2);
+  assert.equal(groupEvents(events.filter(e=>!e.excluded))[0].hours,0);
+});
+test('bulk matching uses original name when the selected entry is renamed',()=>{
+  const events=[event('Курс'),event('Курс',{category:'',minutes:null,confirmed:false}),event('Новое название')];
+  const unrelated={...events[2]};
+  applyEventEdit(events,[events[0]],{...editValues,title:'Новое название'});
+  assert.equal(events[0].title,'Новое название');assert.equal(events[1].title,'Курс');
+  assert.equal(events[1].minutes,60);assert.equal(isReady(events[1]),true);assert.deepEqual(events[2],unrelated);
+});
 test('zero hours retain the event and allow export only after confirmation',()=>{
   const e=event('Совещание вожатых',{minutes:0});
   assert.equal(isReady(e),true);assert.equal(groupEvents([e])[0].hours,0);

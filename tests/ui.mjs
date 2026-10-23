@@ -56,6 +56,39 @@ try {
  await page.locator('#export').click();assert(await page.locator('#resolve-download').isEnabled());
  const [saved]=await Promise.all([page.waitForEvent('download'),page.locator('#resolve-download').click()]);
  await saved.saveAs('.local/qa-regression.docx');
+ // Leave one occurrence without time and move another to a separate section.
+ const bulkFixture=await page.evaluate(async base64=>{
+  const z=await window.JSZip.loadAsync(base64,{base64:true});
+  const name='xl/worksheets/sheet1.xml';
+  z.file(name,(await z.file(name).async('string')).replace('10:00-10:40',''));
+  return z.generateAsync({type:'base64'});
+ },fixture);
+ await page.locator('#workbook').setInputFiles({name:'bulk-regression.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from(bulkFixture,'base64')});
+ await page.locator('#analyze').click();
+ await course.getByRole('button',{name:'Изменить',exact:true}).click();
+ if(await page.locator('#edit-sources').getAttribute('open')===null)await page.locator('#edit-sources summary').click();
+ await page.locator('[data-source]').nth(1).click();
+ await page.locator('#edit-category').selectOption('3.2');
+ await page.locator('#edit-minutes').fill('60');
+ await page.locator('#edit-save').click();
+ assert.equal(await course.count(),2);
+ await page.locator('#export').click();
+ const unresolvedCourse=page.locator('#resolve-list .resolve-item').filter({hasText:'Курс ДИТЦ'});
+ assert.equal(await unresolvedCourse.count(),1);
+ await unresolvedCourse.getByRole('button',{name:'Проверить время'}).click();
+ await page.locator('#edit-category').selectOption('2');
+ await page.locator('#edit-minutes').fill('40');
+ await page.locator('#edit-apply').check();
+ assert((await page.locator('#edit-scope').textContent()).includes('Введённая длительность подтвердит их время'));
+ await page.locator('#edit-save').click();
+ assert.equal(await unresolvedCourse.count(),0);
+ await page.locator('#resolve-back').click();
+ assert.equal(await course.count(),1);
+ assert((await course.textContent()).includes('Проверено'));
+ assert((await course.textContent()).includes('Занятий на ребёнка: 2 · записей в сетке: 4'));
+ assert((await course.locator('.hours').textContent()).startsWith('2'));
+ await page.locator('[data-filter="pending"]').click();
+ assert.equal(await course.count(),0);
  assert.deepEqual(errors,[]);
- console.log('UI: grouped review, bulk category, blank-vs-zero, different durations, individual edit, export PASS');
+ console.log('UI: grouped review, bulk section and duration resolve pending entries across sections, blank-vs-zero, different durations, individual edit, export PASS');
 }finally{await browser.close();}

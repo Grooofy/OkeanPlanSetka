@@ -1,4 +1,4 @@
-import { academicHours,normalize,groupEvents,reviewGroups,isReady,googleExportUrl } from './core.js';
+import { academicHours,normalize,groupEvents,reviewGroups,isReady,googleExportUrl,applyEventEdit } from './core.js';
 import {readWorkbook,readDocx,templateCategories,exampleDictionary,calendarDictionary,extractEvents,exportDocx} from './files.js';
 const $=id=>document.getElementById(id);
 const state={sheets:[],events:[],categories:[],dictionary:[],filter:'all',page:0,editing:null,template:null,calendar:null,example:null};
@@ -79,6 +79,12 @@ function render(){
 document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{state.filter=b.dataset.filter;state.page=0;render();});$('search').oninput=()=>{state.page=0;render();};
 $('reset').onclick=()=>{clearResult();message('Результат очищен. Исходные файлы сохранены до закрытия страницы.');};
 function editingEvents(){return state.events.filter(e=>state.editing.includes(e.id));}
+function editScope(){
+  const multiple=editingEvents().length>1;
+  $('edit-scope').textContent=$('edit-apply').checked
+    ?'Раздел и введённая длительность применятся ко всем мероприятиям с исходным названием, включая записи в других разделах и в списке «Нужна проверка». Введённая длительность подтвердит их время; пустое поле сохранит время и статус проверки каждой записи. Число проведений у остальных записей не изменится.'
+    :multiple?'Название, раздел, исключение и введённая длительность применятся ко всем показанным записям. Пустая длительность сохранит время каждой записи. Количество рассчитано автоматически; изменить отдельное проведение можно в исходных записях.':'Изменения сохранятся только для этой записи. Чтобы применить раздел и длительность ко всем мероприятиям с таким названием, поставьте галочку выше.';
+}
 function calculation(){
   const entries=editingEvents(),m=$('edit-minutes').value===''?null:Number($('edit-minutes').value),n=Number($('edit-count').value);
   const preview=entries.map(e=>({...e,minutes:m??e.minutes,count:entries.length>1?e.count:n,confirmed:m!==null||e.confirmed}));
@@ -97,26 +103,24 @@ function edit(id,grouped=false){
   $('edit-minutes').value=entries.every(item=>item.minutes===e.minutes)?e.minutes??'':'';
   $('edit-minutes').placeholder=multiple?'Разная — сохранится по записям':'';
   $('edit-count').value=multiple?g.count:e.count;$('edit-count').disabled=multiple;
-  $('edit-scope').textContent=multiple?'Название, раздел, исключение и введённая длительность применятся ко всем показанным записям. Пустая длительность сохранит время каждой записи. Количество рассчитано автоматически; изменить отдельное проведение можно в исходных записях.':'Длительность и число проведений сохраняются только для этой записи.';
   $('edit-category').innerHTML=options(e.category);$('edit-excluded').checked=e.excluded;$('edit-apply').checked=false;
+  editScope();
   $('edit-suggestion').textContent=[e.reason,e.suggestion?`Похожее: «${e.suggestion.title}» → ${categoryName(e.suggestion.category)}. Выберите раздел, если совпадение верно.`:e.match].filter(Boolean).join('. ');
   calculation();$('editor').showModal();
 }
 $('edit-minutes').oninput=calculation;$('edit-count').oninput=calculation;
+$('edit-apply').onchange=editScope;
 $('edit-form').onsubmit=e=>e.preventDefault();$('edit-cancel').onclick=()=>$('editor').close();document.querySelector('#editor .close').onclick=e=>{e.preventDefault();$('editor').close();};
 $('edit-save').onclick=()=>{
-  const entries=editingEvents(),e=entries[0],multiple=entries.length>1,excluded=$('edit-excluded').checked;
+  const entries=editingEvents(),multiple=entries.length>1,excluded=$('edit-excluded').checked;
   const minutes=$('edit-minutes').value===''?null:Number($('edit-minutes').value),count=Number($('edit-count').value),title=$('edit-title').value.trim(),category=$('edit-category').value;
+  if($('edit-apply').checked&&category&&minutes!==null&&(!Number.isInteger(minutes)||minutes<0||minutes>1440)){
+    $('edit-suggestion').textContent='Для применения ко всем мероприятиям укажите длительность 0–1440 минут.';return;
+  }
   if(!excluded&&(!title||!category||(minutes===null?!multiple:!Number.isInteger(minutes)||minutes<0||minutes>1440)||(!multiple&&(!Number.isInteger(count)||count<1||count>999)))){
     $('edit-suggestion').textContent='Укажите название, раздел, длительность 0–1440 минут и число проведений 1–999. Ноль минут означает ноль часов.';return;
   }
-  const key=normalize(e.title);
-  for(const item of entries){
-    Object.assign(item,{title:title||item.title,category,excluded,exclusion:excluded?'Исключено пользователем':''});
-    if(!multiple)item.count=count;
-    if(minutes!==null)Object.assign(item,{minutes,confirmed:!excluded,reason:''});
-  }
-  if($('edit-apply').checked&&category)for(const other of state.events)if(normalize(other.title)===key)other.category=category;
+  applyEventEdit(state.events,entries,{title,category,minutes,count,excluded,applyAll:$('edit-apply').checked});
   $('editor').close();render();if($('resolve').open)renderResolve();
 };
 function renderResolve(){

@@ -107,6 +107,20 @@ export function reviewGroups(events) {
   return [false,true].flatMap(excluded=>groupEvents(events.filter(e=>!!e.excluded===excluded)).map(g=>({...g,excluded,id:g.occurrences[0].id})));
 }
 export function isReady(e) { return e.excluded || (!!e.category && !!e.confirmed && academicHours(e.minutes) !== null && Number.isInteger(e.count) && e.count > 0 && !!e.title.trim()); }
+export function applyEventEdit(events, entries, {title, category, minutes, count, excluded, applyAll}) {
+  // Capture matches before editing the title; the checkbox also covers other sections.
+  const key=normalize(entries[0].title);
+  const matches=applyAll && category ? events.filter(e=>normalize(e.title)===key) : [];
+  for(const item of entries) {
+    Object.assign(item,{title:title||item.title,category,excluded,exclusion:excluded?'Исключено пользователем':''});
+    if(entries.length===1)item.count=count;
+    if(minutes!==null)Object.assign(item,{minutes,confirmed:!excluded,reason:''});
+  }
+  for(const other of matches) {
+    other.category=category;
+    if(minutes!==null)Object.assign(other,{minutes,confirmed:!other.excluded,reason:''});
+  }
+}
 export function googleExportUrl(input) {
   const u = new URL(input);
   if (u.protocol !== 'https:' || u.hostname !== 'docs.google.com') throw Error('Нужна ссылка https://docs.google.com/spreadsheets/…');
